@@ -78,11 +78,11 @@ class UserMessageDb extends ProxyDb{
         $sql=sprintf("
             INSERT INTO user_message_session
             (
-              sessionKey,userId,relateId,lastConcatTime,lastContentInfo,isRead
+              sessionKey,userId,relateId,lastConcatTime,lastContentInfo,isRead,unReadCount
             )
             VALUES
             (
-              :sessionKey,:userId,:relateId,:lastConcatTime,:lastContentInfo,:isRead
+              :sessionKey,:userId,:relateId,:lastConcatTime,:lastContentInfo,:isRead,:unReadCount
             )
         ");
 
@@ -92,7 +92,8 @@ class UserMessageDb extends ProxyDb{
             'userId'=>$userMessageSession->userId,
             'relateId'=>$userMessageSession->relateId,
             'lastConcatTime'=>$userMessageSession->lastConcatTime,
-            'isRead'=>$userMessageSession->isRead
+            'isRead'=>$userMessageSession->isRead,
+            'unReadCount'=>$userMessageSession->unReadCount
         ]);
     }
 
@@ -104,14 +105,14 @@ class UserMessageDb extends ProxyDb{
      * @param $content
      * @param $lastConcatTime
      * @param $isRead
+     * @param int $unReadCount
      */
-    public function updateUserMessageSession($sessionKey,$userId,$content,$lastConcatTime,$isRead)
+    public function updateUserMessageSession($sessionKey,$userId,$content,$lastConcatTime,$isRead,$unReadCount=0)
     {
 
-        echo $isRead."-----------------------";
         $sql=sprintf("
           UPDATE user_message_session SET
-          lastConcatTime=:lastConcatTime,lastContentInfo=:lastContentInfo,isRead=:isRead
+          lastConcatTime=:lastConcatTime,lastContentInfo=:lastContentInfo,isRead=:isRead,unReadCount=:unReadCount
           WHERE sessionKey=:sessionKey AND userId=:userId
         ");
 
@@ -121,170 +122,12 @@ class UserMessageDb extends ProxyDb{
             'lastConcatTime'=>$lastConcatTime,
             'userId'=>$userId,
             'isRead'=>$isRead,
+            'unReadCount'=>$unReadCount
         ]);
     }
 
 
-    /**
-     * 获取用户会话列表
-     * @param $userId
-     * @param null $isRead
-     * @return array
-     */
-    public function getUserMessageSessionByUserId($userId,$isRead=null)
-    {
-        $sql=sprintf("
-            SELECT DISTINCT ub.nickname,ub.headImg,s.* FROM
-            (
-                SELECT sessionId,sessionKey,userId,relateId,lastConcatTime,lastContentInfo,isRead
-                FROM user_message_session
-                WHERE userId=:userId
-            )
-            AS s
-            LEFT JOIN user_base ub ON ub.userSign=s.relateId
-            WHERE 1=1
-        ");
-        if(isset($isRead)){
-            $sql.=" AND s.isRead=:isRead ";
-        }
-        $sql.=" ORDER BY s.isRead,s.lastConcatTime DESC ";
-        $command=$this->getConnection()->createCommand($sql);
-        $command->bindParam(":userId", $userId, PDO::PARAM_STR);
 
-        if(isset($isRead)){
-            $command->bindParam(":isRead", $isRead, PDO::PARAM_INT);
-        }
-        return $command->queryAll();
-    }
-
-
-    /**
-     * 获取未读系统小心详情
-     * @param $userSign
-     * @return array
-     */
-    public function getUnReadSystemMessageList($userSign)
-    {
-        $sql=sprintf("
-            SELECT * FROM user_message
-            WHERE isRead=False AND senderId=:senderId AND receiveId=:receiveId
-            ORDER BY sendTime DESC
-        ");
-        $command=$this->getConnection()->createCommand($sql);
-        $command->bindParam(":receiveId", $userSign, PDO::PARAM_STR);
-        $command->bindValue(":senderId", Code::USER_SYSTEM_MESSAGE_ID, PDO::PARAM_STR);
-
-        return $command->queryAll();
-    }
-
-
-    /**
-     * 获取用户聊天记录列表
-     * @param $userId
-     * @param $sessionKey
-     * @return array
-     */
-    public function getUserMessageListByKey($userId,$sessionKey)
-    {
-        $sql=sprintf("
-            SELECT * FROM user_message
-            WHERE sessionKey=:sessionKey
-            AND
-            (
-              (receiveId=:userId AND isShield!=TRUE ) OR (senderId=:userId)
-            )
-        ");
-        $command=$this->getConnection()->createCommand($sql);
-
-        $command->bindParam(":userId", $userId, PDO::PARAM_STR);
-        $command->bindParam(":sessionKey", $sessionKey, PDO::PARAM_STR);
-        return $command->queryAll();
-    }
-
-    /**
-     * 更新已读
-     * @param $userId
-     * @param $sessionKey
-     */
-    public function updateUserMessageSessionRead($userId,$sessionKey)
-    {
-        $sql=sprintf("
-          UPDATE user_message_session SET
-          isRead=TRUE
-          WHERE sessionKey=:sessionKey AND userId=:userId
-        ");
-
-        $command=$this->getConnection()->createCommand($sql);
-        $command->bindParam(":sessionKey", $sessionKey, PDO::PARAM_STR);
-        $command->bindParam(":userId",$userId);
-
-        $command->execute();
-    }
-
-    /**
-     * 更新已读
-     * @param $sessionKey
-     * @param $userSign
-     */
-    public function updateUserMessageRead($sessionKey,$userSign)
-    {
-        $sql=sprintf("
-          UPDATE user_message SET
-          isRead=TRUE,readTime=now()
-          WHERE  sessionKey=:sessionKey AND isRead=FALSE  AND receiveId=:userId
-        ");
-
-        $command=$this->getConnection()->createCommand($sql);
-        $command->bindParam(":sessionKey", $sessionKey, PDO::PARAM_STR);
-        $command->bindParam(":userId", $userSign, PDO::PARAM_STR);
-
-        $command->execute();
-    }
-
-    /**
-     * 更新系统消息已读
-     * @param $messageId
-     * @param $userSign
-     
-     */
-    public function updateSystemMessageRead($messageId,$userSign)
-    {
-        $sql=sprintf("
-          UPDATE user_message SET
-          isRead=TRUE,readTime=now()
-          WHERE isRead=FALSE  AND messageId=:messageId AND  receiveId=:receiveId
-        ");
-
-        $command=$this->getConnection()->createCommand($sql);
-        $command->bindParam(":messageId", $messageId, PDO::PARAM_INT);
-        $command->bindParam(":receiveId", $userSign, PDO::PARAM_STR);
-
-        $command->execute();
-    }
-
-
-    /**
-     * 获取用户未读信息条数
-     * @param $userSign
-     * @param $count
-     */
-    public function getUnReadMessageInfoList($userSign,$count)
-    {
-        $sql=sprintf("
-          SELECT um.*,ub.nickname,ub.headImg FROM user_message um
-          LEFT JOIN user_base ON um.receiveId=ub.userSign
-          WHERE isRead=FALSE AND um.receiverId=:userId
-          ORDER BY um.sendTime DESC
-          LIMIT 0,".$count."
-
-        ");
-
-        $command=$this->getConnection()->createCommand($sql);
-        $command->bindParam(":sessionKey", $sessionKey, PDO::PARAM_STR);
-        $command->bindParam(":userId", $userSign, PDO::PARAM_STR);
-
-        $command->execute();
-    }
 
 
     /**
@@ -313,26 +156,6 @@ class UserMessageDb extends ProxyDb{
 
     }
 
-
-    /**
-     * 更新用户消息设置
-     * @param UserMessageSetting $userMessageSetting
-     */
-    public function updateUserMessageSetting(UserMessageSetting $userMessageSetting)
-    {
-        $sql=sprintf("
-            UPDATE user_message_setting SET
-            status=:status,shieldIds=:shieldIds
-            WHERE userId=:userId
-        ");
-
-        $command=$this->getConnection()->createCommand($sql);
-        $command->bindParam(":userId", $userMessageSetting->userId, PDO::PARAM_STR);
-        $command->bindParam(":status", $userMessageSetting->status, PDO::PARAM_INT);
-        $command->bindParam(":shieldIds", $userMessageSetting->shieldIds, PDO::PARAM_STR);
-
-        $command->execute();
-    }
 
 
     /**

@@ -59,10 +59,12 @@ class UserMessageService extends BaseDb{
                     $receiverMessageSession->lastContentInfo=$userMessage->content;
                     $receiverMessageSession->lastConcatTime=$userMessage->sendTime;
                     $receiverMessageSession->isRead=0;
+                    $receiverMessageSession->unReadCount=1;
 
                     $this->userMessageDb->addUserMessageSession($receiverMessageSession);
                 }else{
-                    $this->userMessageDb->updateUserMessageSession($receiverMessageSession['sessionKey'],$userMessage->receiveId,$userMessage->content,$userMessage->sendTime,0);
+                    $unReadCount=$receiverMessageSession['unReadCount']+1;
+                    $this->userMessageDb->updateUserMessageSession($receiverMessageSession['sessionKey'],$userMessage->receiveId,$userMessage->content,$userMessage->sendTime,0,$unReadCount);
                 }
             }else{
                 //如果屏蔽了，那么要设置userMessage 屏蔽状态
@@ -79,10 +81,11 @@ class UserMessageService extends BaseDb{
                 $senderMessageSession->lastConcatTime=$userMessage->sendTime;
 
                 $senderMessageSession->isRead=1;
+                $senderMessageSession->unReadCount=0;
 
                 $this->userMessageDb->addUserMessageSession($senderMessageSession);
             }else{
-                $this->userMessageDb->updateUserMessageSession($senderMessageSession['sessionKey'],$userMessage->senderId,$userMessage->content,$userMessage->sendTime,1);
+                $this->userMessageDb->updateUserMessageSession($senderMessageSession['sessionKey'],$userMessage->senderId,$userMessage->content,$userMessage->sendTime,1,0);
             }
 
             $this->userMessageDb->addUserMessage($userMessage);
@@ -156,9 +159,4 @@ class UserMessageService extends BaseDb{
     }
 
 
-
-    public function getUserSessionByUserId($userSign)
-    {
-
-    }
 }

@@ -23,6 +23,8 @@ use \GatewayWorker\Lib\Store;
 class Event
 {
 
+    const USER_ROOM=1;
+    const SYS_ROOM=2;
     /**
      * 有消息时
      * @param int $client_id
@@ -45,9 +47,11 @@ class Event
             // 客户端回应服务端的心跳
             case 'pong':
                 //判断是否有新的未读消息
-                $all_clients=self::getClientListFromRoom($_SESSION['room_id']);
-                var_dump($all_clients);
-                //如果有 获取用户未读消息列表 并且刷新session
+                $all_clients=self::getClientListFromRoom(self::USER_ROOM);
+                $all_sys_clients=self::getClientListFromRoom(self::SYS_ROOM);
+                var_dump('用户',$all_clients);
+                var_dump('系统',$all_sys_clients);
+
                 return;
             // 客户端登录 message格式: {type:login, name:xx, room_id:1} ，添加到客户端，广播给所有客户端xx进入聊天室
             case 'login':
@@ -56,35 +60,36 @@ class Event
                 if (!isset($message_data['user_key'])) {
                     throw new \Exception("\$message_data['user_key'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
                 }
-
                 // 把房间号昵称放到session中
                 $userKey = $message_data['user_key'];
-                $userInfo = self::findUserInfoByUserKey($userKey);
-                if (empty($userInfo)) {
-                    throw new \Exception("\$message_data['user_info'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
+            // 把房间号昵称放到session中
+            if(array_key_exists('is_admin',$message_data)&&$message_data['is_admin']==1){
+                    $userInfo = self::findSysUserInfoByUserKey($userKey);
+                    if (empty($userInfo)) {
+                        throw new \Exception("\$message_data['user_info'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
+                    }
+                    $room_id=self::SYS_ROOM;
+                    $userSign = htmlspecialchars($userInfo['userSign']);
+                    $_SESSION['sys_room_id'] = $room_id;
+                    $_SESSION['sys_user_sign'] = $userSign;
+                    $_SESSION['sys_user_info'] = $userInfo;
+
+                    self::addClientToRoom($room_id, $client_id, $userSign);
+
+            }else{
+                    $room_id = self::USER_ROOM;
+                    $userInfo = self::findUserInfoByUserKey($userKey);
+                    if (empty($userInfo)) {
+                        throw new \Exception("\$message_data['user_info'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
+                    }
+                    $userSign = htmlspecialchars($userInfo['userSign']);
+                    $_SESSION['room_id'] = $room_id;
+                    $_SESSION['userSign'] = $userSign;
+                    $_SESSION['user_info'] = $userInfo;
+                    self::addClientToRoom($room_id, $client_id, $userSign);
+
                 }
-                //获取用户未读消息数存入session
-
-                // 把房间号昵称放到session中
-                $room_id = 1;
-                $userSign = htmlspecialchars($userInfo['userSign']);
-                $_SESSION['room_id'] = $room_id;
-                $_SESSION['userSign'] = $userSign;
-                $_SESSION['user_info'] = $userInfo;
-
-//                $all_clients = self::getClientListFromRoom($room_id);
-//                if (!empty($all_clients)) {
-//                    $receiveClientId = array_search($userSign, $all_clients);
-//                    if ($receiveClientId !== false) {
-//                        self::delClientFromRoom($room_id, $receiveClientId);
-//                    }
-//                }
-                self::addClientToRoom($room_id, $client_id, $userSign);
-
-
-                // 存储到当前房间的客户端列表
                 return;
-
             // 客户端发言 message: {type:say, to_client_id:xx, content:xx}
             //ws.send(JSON.stringify({"type": "say","to_client_id": "a4c1406ff4cc382389f19bf6ec3e55c1","content": "哈哈"}));
 
@@ -113,15 +118,105 @@ class Event
                     $userMessageService = new \Applications\Suiuu\Services\UserMessageService();
 
                     $userMessage = new \Applications\Suiuu\Entity\UserMessage();
-                    $userMessage->senderId = $senderId;
-                    $userMessage->receiveId = $receiveId;
-                    $userMessage->content = $content;
+                    $userMessage->senderId = htmlspecialchars($senderId);
+                    $userMessage->receiveId = htmlspecialchars($receiveId);
+                    $userMessage->content = htmlspecialchars($content);
                     $userMessage->sendTime = date('Y-m-d H:i:s');
                     $userMessage->isShield = 0;
 
                     $sessionKey = $userMessageService->addUserMessage($userMessage);
 
                     $all_clients = self::getClientListFromRoom($_SESSION['room_id']);
+
+                    $receiveClientArray =  array_keys ($all_clients,$receiveId);
+
+                    //判断用户是否在线 如果在线 推送消息 然后对方发起刷新
+                    $new_message = array(
+                        'type' => 'say',
+                        'sender_id' => $senderId,
+                        'sender_name' => htmlspecialchars($userInfo['nickname']),
+                        'sender_HeadImg' => $userInfo['headImg'],
+                        'receive_id' => $receiveId,
+                        'content' => nl2br(htmlspecialchars($content)),
+                        'time' => $userMessage->sendTime,
+                        'session_key' => $sessionKey
+                    );
+
+                    if (count($receiveClientArray)==0) {
+                        //设置对方用户有为未读消息
+                        self::setUserHasUnReadMessage($receiveId);
+                    } else {
+                        foreach($receiveClientArray as $receiveClientId)
+                        {
+                            Gateway::sendToClient($receiveClientId, json_encode($new_message));
+                            echo "推送用户" . $receiveClientId . "成功！";
+                        }
+                    }
+                    //判断是否是小号
+                    $sysInfo=self::getSysUserInfo($receiveId);
+                    if(!empty($sysInfo)){
+                        $allSysClient = self::getClientListFromRoom(self::SYS_ROOM);
+                        $new_message['receive_name']=$sysInfo['nickname'];
+                        $new_message['receive_head_img']=$sysInfo['headImg'];
+
+                        foreach($allSysClient as $key=>$value)
+                        {
+                            Gateway::sendToClient($key, json_encode($new_message));
+                            echo "推送系统 key:".$key.' value:' . $value . "成功！";
+                        }
+                    }
+
+
+                } catch (Exception $e) {
+                    throw $e;
+                }
+
+                return;
+            case 'sys_say':
+                // 非法请求
+                if (!isset($_SESSION['sys_user_info'])) {
+                    throw new \Exception("\$sys_user_info not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
+                }
+                if (!isset($message_data['content'])) {
+                    throw new \Exception("\$message_data['content'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
+                }
+                if (!isset($message_data['to_client_id'])) {
+                    throw new \Exception("\$message_data['to_client_id'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
+                }
+                if (!isset($message_data['client_id'])) {
+                    throw new \Exception("\$message_data['client_id'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
+                }
+                if (!isset($message_data['nickname'])) {
+                    throw new \Exception("\$message_data['nickname'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
+                }
+                if (!isset($message_data['head_img'])) {
+                    throw new \Exception("\$message_data['head_img'] not set. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
+                }
+
+
+                $receiveId = $message_data['to_client_id'];
+                $content = $message_data['content'];
+                $senderId = $message_data['client_id'];
+                $nickname=$message_data['nickname'];
+                $headImg=$message_data['head_img'];
+
+                if ($senderId == $receiveId) {
+                    throw new \Exception("\$message_data['to_client_id'] is no validate. client_ip:{$_SERVER['REMOTE_ADDR']} \$message:$message");
+                }
+                try {
+                    //插入数据库
+                    $userMessageService = new \Applications\Suiuu\Services\UserMessageService();
+
+                    $userMessage = new \Applications\Suiuu\Entity\UserMessage();
+                    $userMessage->senderId = htmlspecialchars($senderId);
+                    $userMessage->receiveId = htmlspecialchars($receiveId);
+                    $userMessage->content = htmlspecialchars($content);
+                    $userMessage->sendTime = date('Y-m-d H:i:s');
+                    $userMessage->isShield = 0;
+
+                    $sessionKey = $userMessageService->addUserMessage($userMessage);
+
+                    $all_clients = self::getClientListFromRoom(self::USER_ROOM);
 
                     $receiveClientArray =  array_keys ($all_clients,$receiveId);
 
@@ -133,8 +228,8 @@ class Event
                         $new_message = array(
                             'type' => 'say',
                             'sender_id' => $senderId,
-                            'sender_name' => htmlspecialchars($userInfo['nickname']),
-                            'sender_HeadImg' => $userInfo['headImg'],
+                            'sender_name' => htmlspecialchars($nickname),
+                            'sender_HeadImg' => $headImg,
                             'receive_id' => $receiveId,
                             'content' => nl2br(htmlspecialchars($content)),
                             'time' => $userMessage->sendTime,
@@ -155,10 +250,20 @@ class Event
             // 用户退出 更新用户列表
             case 'logout':
                 //{"type":"logout","client_id":xxx,"time":"xxx"}
-                $room_id=$_SESSION['room_id'];
-                self::delClientFromRoom($room_id, $client_id);
-                $_SESSION['userSign']='';
-                $_SESSION['user_info']='';
+                if(array_key_exists('room_id',$_SESSION)){
+                    $room_id=$_SESSION['room_id'];
+                    self::delClientFromRoom($client_id,$room_id);
+                    if(isset($_SESSION['user_info'])){
+                        $_SESSION['user_info']=null;
+                        $_SESSION['userSign']=null;
+                    }
+                }else{
+                    $room_id=self::SYS_ROOM;
+                    self::delClientFromRoom($client_id,$room_id);
+                    $_SESSION['sys_room_id'] = null;
+                    $_SESSION['sys_user_sign'] = null;
+                    $_SESSION['sys_user_info'] = null;
+                }
 
         }
     }
@@ -171,11 +276,36 @@ class Event
         //$redisKey=$keyPrefix . md5(json_encode([$path, $user_key]));
         $redisKey="U_L_S_C" . $user_key;
         $store = Store::instance('room');
+        $data=$store->get($redisKey);
+        $data=json_decode($data,true);
+        return $data;
+    }
+    public static function findSysUserInfoByUserKey($user_key)
+    {
+        $redisKey="S_U_C_S" . $user_key;
+        $store = Store::instance('room');
         $date=$store->get($redisKey);
         $date=json_decode($date,true);
         return $date;
     }
 
+    public static function getSysUserInfo($user_sign)
+    {
+        $redisKey="S_A_U_S_C";
+        $store = Store::instance('room');
+        $data=$store->get($redisKey);
+        $data=json_decode($data,true);
+        if(empty($data)){
+            return false;
+        }
+        foreach($data as $temp)
+        {
+            if($temp['userSign']==$user_sign){
+                return $temp;
+            }
+        }
+        return null;
+    }
 
     public static function setUserHasUnReadMessage($userSign)
     {
@@ -203,12 +333,21 @@ class Event
     {
         // debug
         echo "client:{$_SERVER['REMOTE_ADDR']}:{$_SERVER['REMOTE_PORT']} gateway:{$_SERVER['GATEWAY_ADDR']}:{$_SERVER['GATEWAY_PORT']}  client_id:$client_id onClose:''\n";
-        $room_id=$_SESSION['room_id'];
-        self::delClientFromRoom($client_id,$room_id);
-        if(isset($_SESSION['user_info'])){
-            $_SESSION['user_info']=null;
-            $_SESSION['userSign']=null;
+        if(array_key_exists('room_id',$_SESSION)){
+            $room_id=$_SESSION['room_id'];
+            self::delClientFromRoom($client_id,$room_id);
+            if(isset($_SESSION['user_info'])){
+                $_SESSION['user_info']=null;
+                $_SESSION['userSign']=null;
+            }
+        }else{
+            $room_id=self::SYS_ROOM;
+            self::delClientFromRoom($client_id,$room_id);
+            $_SESSION['sys_room_id'] = null;
+            $_SESSION['sys_user_sign'] = null;
+            $_SESSION['sys_user_info'] = null;
         }
+
     }
 
 
