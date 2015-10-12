@@ -120,7 +120,7 @@ class Event
                     $userMessage = new \Applications\Suiuu\Entity\UserMessage();
                     $userMessage->senderId = htmlspecialchars($senderId);
                     $userMessage->receiveId = htmlspecialchars($receiveId);
-                    $userMessage->content = htmlspecialchars($content);
+                    $userMessage->content = htmlspecialchars(str_replace("\n","<br/>",$content));
                     $userMessage->sendTime = date('Y-m-d H:i:s');
                     $userMessage->isShield = 0;
 
@@ -210,7 +210,7 @@ class Event
                     $userMessage = new \Applications\Suiuu\Entity\UserMessage();
                     $userMessage->senderId = htmlspecialchars($senderId);
                     $userMessage->receiveId = htmlspecialchars($receiveId);
-                    $userMessage->content = htmlspecialchars($content);
+                    $userMessage->content = htmlspecialchars(str_replace("\n","<br/>",$content));
                     $userMessage->sendTime = date('Y-m-d H:i:s');
                     $userMessage->isShield = 0;
 
